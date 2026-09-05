@@ -1,3 +1,6 @@
+> ⛔ **EXPIRED** — the GitHub Actions job that served this preview has ended.
+> Run `preview-tunnel.yml` again for a fresh URL.
+
 # 🌐 Live public preview — temporary
 
 **URL:** https://poet-attached-leaf-ranks.trycloudflare.com
