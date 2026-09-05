@@ -15,31 +15,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Image name
+        run: echo "IMG=ghcr.io/$(printf '%s' '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: lowercase image slug
-        id: slug
-        run: echo "repo=${GITHUB_REPOSITORY,,}" >>"$GITHUB_OUTPUT"
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            ghcr.io/${{ steps.slug.outputs.repo }}:latest
-            ghcr.io/${{ steps.slug.outputs.repo }}:${{ github.ref_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: false
-
-      - name: how to run it
-        if: github.event_name != 'pull_request'
+      # plain docker build/push — fewer moving parts than buildx + gha cache.
+      # Failures are echoed as ::error:: annotations so they are readable over the API
+      # (the raw log host is not reachable from every network).
+      - name: Build
         run: |
-          echo "::notice::Image pushed. Public URL in one command on any VPS:  DOMAIN=bot.example.com curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/deploy/deploy.sh | sudo DOMAIN=bot.example.com bash"
+          set +e
+          docker build -t "$IMG" . >build.log 2>&1
+          code=$?
+          set -e
+          if [ "$code" != "0" ]; then
+            msg=$(grep -iE "error|denied|cannot|failed" build.log | tail -3 | cut -c1-160 | paste -sd' ' - | tr -d '"')
+            echo "::error::docker build failed: ${msg:-see log}"
+            exit 1
+          fi
+          tail -3 build.log
+          docker image ls --digests | head -3
+
+      - name: Push to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >login.log 2>&1 \
+            || { echo "::error::ghcr login failed: $(tail -2 login.log | paste -sd' ' -)"; exit 1; }
+          docker push "$IMG" >push.log 2>&1
+          code=$?
+          if [ "$code" != "0" ]; then
+            msg=$(grep -iE "denied|unauthorized|error|name unknown" push.log | tail -2 | cut -c1-160 | paste -sd' ' - | tr -d '"')
+            echo "::error::ghcr push failed: ${msg:-see log}. deploy.sh still works — it builds from source on the VPS."
+            exit 1
+          fi
+          tail -2 push.log
+          echo "### pushed \`$IMG\`" >> "$GITHUB_STEP_SUMMARY"
