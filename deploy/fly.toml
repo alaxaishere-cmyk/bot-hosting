@@ -1,0 +1,56 @@
+# Zero-server option: `flyctl deploy` gives you https://<app>.fly.dev in one command.
+#
+#   brew install flyctl   (or: curl -L https://fly.io/install.sh | sh)
+#   fly apps create bot-panel
+#   fly volumes create panel_data --size 1 --app bot-panel
+#   fly secrets set PANEL_ADMIN_PASS='pick-a-long-random-one' --app bot-panel
+#   fly deploy                      # uses the Dockerfile next to this file
+#
+# Free/new accounts need a card on file for volumes; 1 shared VM is enough for a few bots.
+
+app = "bot-panel"
+primary_region = "bom"          # Mumbai
+kill_signal = "SIGTERM"
+kill_timeout = "20s"
+
+[build]
+  dockerfile = "../Dockerfile"
+
+[env]
+  PORT = "3000"
+
+[mounts]
+  source = "panel_data"
+  destination = "/app/data"
+
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+  force_https = true
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 250
+    soft_limit = 200
+
+  [[services.http_checks]]
+    interval = "20s"
+    timeout = "3s"
+    grace_period = "10s"
+    method = "get"
+    path = "/healthz"
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "1024mb"            # 3 accounts × 308 MiB + the panel; raise it for more users

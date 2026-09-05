@@ -124,19 +124,33 @@ panel running and ~1.5 GB of free disk for the quota checks.
 
 ## Making it a real public link
 
-The panel has no built-in tunnel — put any HTTPS reverse proxy in front of port 3000 and share
-that domain. Two things matter: **TLS** (so the session cookie is `Secure`) and **WebSocket
-upgrade** (the live console streams over `/ws`).
+The panel needs one machine with a public IP (yours, or a ₹200–400/mo VPS). Everything for that is
+already in the repo: `Dockerfile`, `deploy/deploy.sh`, `deploy/fly.toml`, and
+`.github/workflows/docker.yml`, which builds `ghcr.io/alaxaishere-cmyk/bot-hosting:latest` on push.
 
-**Caddy** (auto HTTPS, 4 lines — `caddy reverse-proxy` style):
+**A — any VPS, one line (auto HTTPS with Caddy):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/alaxaishere-cmyk/bot-hosting/arena/01a06fa3-bot-hosting/deploy/deploy.sh \
+  | sudo env DOMAIN=bot.example.com bash
+```
+
+Point an A record for `bot.example.com` at the box first. The script pulls the CI image (falls back
+to building from source if the package is still private), starts panel + Caddy, and prints the admin
+login it generated. Re-run it any time to upgrade — the bots and the DB survive in `/srv/bot-hosting/data`.
+
+**B — no server at all (fly.io):** follow the comment at the top of `deploy/fly.toml` — four
+commands, and you get `https://<app>.fly.dev` with the data folder on a fly volume.
+
+**C — your own nginx/Caddy.** Only two things matter: **TLS** (the session cookie flips to `Secure`
+by itself when `X-Forwarded-Proto: https` arrives) and **WebSocket upgrade** on `/ws`, which is what
+streams the console.
 
 ```caddy
 bot.example.com {
-    reverse_proxy 127.0.0.1:3000
+    reverse_proxy 127.0.0.1:3000 { flush_interval -1 }
 }
 ```
-
-**nginx**:
 
 ```nginx
 location / {
@@ -145,21 +159,25 @@ location / {
     proxy_set_header Upgrade    $http_upgrade;      # console websocket
     proxy_set_header Connection $connection_upgrade;
     proxy_set_header Host       $host;
-    proxy_set_header X-Forwarded-Proto $scheme;     # Secure cookie
+    proxy_set_header X-Forwarded-Proto $scheme;      # Secure cookie
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_read_timeout 3600s;                        # long-running bots keep streaming
 }
 ```
 
-**Docker**:
+**D — plain Docker:**
 
 ```bash
 echo 'PANEL_ADMIN_PASS=make-it-long-and-random' > .env
 docker compose up -d --build          # data persists in ./data
 ```
 
-Then set `PANEL_ALLOWED_HOSTS=bot.example.com` to lock it to your domain. `trust proxy` is already
-on, so login throttling keys off the real client IP instead of the proxy.
+Set `PANEL_ALLOWED_HOSTS=bot.example.com` to pin the panel to your domain (Host-header scanning gets
+a 400). `trust proxy` is on, so the login lockout counts the real client IP and not the proxy's.
+Note: from inside a sandbox/CI network you usually *cannot* tunnel — only outbound TLS to allowlisted
+hosts gets through, so `cloudflared`/`ngrok`/`localhost.run` all fail at the handshake. Deploy on a
+real box instead of fighting it.
+
 
 **Before you expose it to the whole internet, read “Honest limitations” below.** The panel is
 designed for a handful of accounts you personally approved (which is exactly the brief: no sign-up
