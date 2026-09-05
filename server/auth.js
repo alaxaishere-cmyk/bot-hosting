@@ -33,13 +33,16 @@ function parseCookies(req) {
   return out;
 }
 
-function createSession(res, user, ua) {
+function createSession(req, res, user, ua) {
   const token = crypto.randomBytes(32).toString('hex');
   const at = now();
   q.insSession.run(token, user.id, at, at + SESSION_TTL_MS, String(ua || '').slice(0, 200));
+  // behind a TLS reverse proxy (or served over https directly) the cookie goes Secure
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const secure = req.socket?.encrypted === true || proto === 'https';
   res.setHeader(
     'Set-Cookie',
-    `${COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
+    `${COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secure ? '; Secure' : ''}`,
   );
   return token;
 }
@@ -126,7 +129,7 @@ function login(req, res, username, password) {
   }
   clearFailures(req, username);
   q.touchLogin.run(now(), user.id);
-  createSession(res, user, req.headers['user-agent']);
+  createSession(req, res, user, req.headers['user-agent']);
   audit(user.username, 'login', user.username, '');
   res.json({ ok: true, user: require('./db').publicUser(user) });
 }

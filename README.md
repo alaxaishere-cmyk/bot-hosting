@@ -122,6 +122,51 @@ npm run test:ui # 58 jsdom checks that render public/app.js and click the real U
 OOM-killed near 308 MiB) and a disk hog (must hit `EFBIG` at ~719 MiB), then cleans up. It needs the
 panel running and ~1.5 GB of free disk for the quota checks.
 
+## Making it a real public link
+
+The panel has no built-in tunnel — put any HTTPS reverse proxy in front of port 3000 and share
+that domain. Two things matter: **TLS** (so the session cookie is `Secure`) and **WebSocket
+upgrade** (the live console streams over `/ws`).
+
+**Caddy** (auto HTTPS, 4 lines — `caddy reverse-proxy` style):
+
+```caddy
+bot.example.com {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+**nginx**:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade    $http_upgrade;      # console websocket
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host       $host;
+    proxy_set_header X-Forwarded-Proto $scheme;     # Secure cookie
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_read_timeout 3600s;                        # long-running bots keep streaming
+}
+```
+
+**Docker**:
+
+```bash
+echo 'PANEL_ADMIN_PASS=make-it-long-and-random' > .env
+docker compose up -d --build          # data persists in ./data
+```
+
+Then set `PANEL_ALLOWED_HOSTS=bot.example.com` to lock it to your domain. `trust proxy` is already
+on, so login throttling keys off the real client IP instead of the proxy.
+
+**Before you expose it to the whole internet, read “Honest limitations” below.** The panel is
+designed for a handful of accounts you personally approved (which is exactly the brief: no sign-up
+form, admin creates everyone), not for strangers — a hostile bot can still touch another user's
+folder because all bots run as one uid. For strangers: one container per user, or add a
+`user: 100xxx` line per account plus per-user quotas, and the panel needs no other change.
+
 ## Layout
 
 ```

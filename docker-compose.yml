@@ -1,0 +1,22 @@
+services:
+  panel:
+    build: .
+    image: bot-hosting-panel:latest
+    ports:
+      - "3000:3000"
+    environment:
+      # first boot only — the admin account is created from these
+      PANEL_ADMIN_USER: ${PANEL_ADMIN_USER:-admin}
+      PANEL_ADMIN_PASS: ${PANEL_ADMIN_PASS:?set PANEL_ADMIN_PASS in .env first}
+      # pin to your domain once it points here (blocks Host-header scanning)
+      PANEL_ALLOWED_HOSTS: ${PANEL_ALLOWED_HOSTS:-}
+    volumes:
+      - ./data:/app/data          # sqlite db + every user's bot folder + logs
+    # whole-box ceiling: 10 accounts × 308 MiB + panel overhead. The per-user
+    # 308 MiB / 719 MiB / 25% limits are enforced by the panel itself.
+    mem_limit: 4g
+    memswap_limit: 4g
+    cpus: 4.0
+    pids_limit: 4096
+    restart: unless-stopped
+    stop_grace_period: 20s

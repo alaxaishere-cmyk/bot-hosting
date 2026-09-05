@@ -19,6 +19,13 @@ mkdirp(LOGS_DIR);
 
 const app = express();
 app.disable('x-powered-by');
+// a reverse proxy (nginx / caddy / fly) in front is the normal public setup; set
+// PANEL_TRUST_PROXY=0 if you expose the port directly to the internet
+app.set('trust proxy', process.env.PANEL_TRUST_PROXY !== '0');
+if (process.env.PANEL_ALLOWED_HOSTS) {
+  const allow = process.env.PANEL_ALLOWED_HOSTS.split(',').map((s) => s.trim());
+  app.use((req, res, next) => (allow.includes(req.hostname) ? next() : res.status(400).json({ error: 'Host not allowed' })));
+}
 app.use(express.json({ limit: '4mb' }));
 app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 app.use((req, res, next) => {
