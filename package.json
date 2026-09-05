@@ -1,0 +1,27 @@
+{
+  "name": "bot-hosting-panel",
+  "version": "1.0.0",
+  "description": "Self-hosted bot hosting panel — one server, fixed 308 MiB RAM / 719 MiB disk / 25% CPU per user, admin-created accounts only.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch server/index.js",
+    "smoke": "node scripts/smoke.js",
+    "test": "node --check server/index.js && node --check scripts/smoke.js",
+    "test:ui": "node scripts/ui-smoke.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@xterm/xterm": "^5.5.0",
+    "express": "^4.22.2",
+    "multer": "^1.4.4",
+    "ws": "^8.21.3"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}
