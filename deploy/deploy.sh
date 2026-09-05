@@ -28,8 +28,11 @@ if ! docker pull --quiet "$IMAGE"; then
   IMAGE=bot-hosting:local
 fi
 
+# a bare IP gets plain http (no certificate possible); a domain gets auto HTTPS
+if [[ "$DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then SITE="http://$DOMAIN"; else SITE="$DOMAIN"; fi
+
 cat > "$DIR/Caddyfile" <<EOF
-$DOMAIN {
+$SITE {
 	encode gzip
 	reverse_proxy 127.0.0.1:3000 {
 		flush_interval -1
@@ -65,7 +68,7 @@ done
 echo "  panel health on localhost: ${code:-none}"
 echo
 echo "  ─────────────────────────────────────────────"
-echo "  public url   :  https://$DOMAIN"
+echo "  public url   :  $([ "$SITE" = "$DOMAIN" ] && echo https || echo http)://$DOMAIN"
 echo "  first login  :  $ADMIN  /  $PASS"
 echo "  (only works on the very first boot — after that the password lives in the db)"
 echo "  data + logs  :  $DIR/data"

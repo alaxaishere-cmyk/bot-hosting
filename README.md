@@ -135,7 +135,11 @@ curl -fsSL https://raw.githubusercontent.com/alaxaishere-cmyk/bot-hosting/arena/
   | sudo env DOMAIN=bot.example.com bash
 ```
 
-Point an A record for `bot.example.com` at the box first. The script pulls the CI image (falls back
+No domain? Pass the bare IP (`DOMAIN=203.0.113.9`) and you get `http://203.0.113.9` — the same
+panel, just without a certificate. With a domain, Caddy provisions HTTPS by itself.
+
+The image is already public: `ghcr.io/alaxaishere-cmyk/bot-hosting:latest` (CI rebuilds it on every
+push), so the box only needs Docker. Point an A record for `bot.example.com` at the box first. The script pulls the CI image (falls back
 to building from source if the package is still private), starts panel + Caddy, and prints the admin
 login it generated. Re-run it any time to upgrade — the bots and the DB survive in `/srv/bot-hosting/data`.
 
