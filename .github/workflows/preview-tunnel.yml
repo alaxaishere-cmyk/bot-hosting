@@ -1,0 +1,144 @@
+name: preview-tunnel
+
+# Temporary PUBLIC url for the panel, served from a GitHub-hosted runner
+# (this sandbox has no outbound tunnel access, so we borrow a runner).
+#
+#   gh workflow run preview-tunnel.yml --ref <branch> -f hours=5
+#   gh run watch                                  # the URL is in the log after ~1 min
+#
+# The URL + login are written to PREVIEW.md at the repo root; when the job ends
+# the file is rewritten with an EXPIRED banner so nobody chases a dead link.
+
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: 'How long to keep the public URL alive (1–5 hours)'
+        required: false
+        default: '5'
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    permissions:
+      contents: write
+    env:
+      HOURS: ${{ github.event.inputs.hours || '5' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install
+        run: npm ci --omit=dev --no-audit --no-fund
+
+      - name: Start the panel
+        env:
+          DEMO_PASS: ${{ secrets.PANEL_DEMO_PASS }}
+        run: |
+          # disposable demo box — the whole point is that anyone with the link can open it,
+          # so the password is random per run unless you set the PANEL_DEMO_PASS repo secret
+          PASS="${DEMO_PASS:-demo-$(date +%s | tail -c 7)}"
+          printf 'admin / %s\n' "$PASS" > creds.txt
+          PANEL_ADMIN_USER=admin PANEL_ADMIN_PASS="$PASS" \
+            nohup node --disable-warning=ExperimentalWarning server/index.js > panel.log 2>&1 &
+          for i in $(seq 1 40); do
+            sleep 1
+            [ "$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/healthz || true)" = "200" ] && break
+          done
+          echo "panel healthz: $(curl -s localhost:3000/healthz)"
+          if ! curl -sf localhost:3000/healthz >/dev/null; then echo "::error::panel never came up"; tail -30 panel.log; exit 1; fi
+
+      - name: Open a public tunnel
+        run: |
+          curl -fsSL -o /tmp/cfd https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /tmp/cfd
+          nohup /tmp/cfd tunnel --no-autoupdate --url http://localhost:3000 > cfd.log 2>&1 &
+          url=""
+          for i in $(seq 1 45); do
+            sleep 2
+            url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' cfd.log | head -1 || true)
+            [ -n "$url" ] && break
+          done
+          if [ -z "$url" ]; then echo "::error::no tunnel url"; tail -25 cfd.log; exit 1; fi
+          echo "PREVIEW_URL=$url" >> "$GITHUB_ENV"
+          sleep 5
+          ext=$(curl -s -o /dev/null -w '%{http_code}' "$url/healthz" || echo 000)
+          echo "EXT_CODE=$ext" >> "$GITHUB_ENV"
+          echo "tunnel self-test through the public url: HTTP $ext"
+          if [ "$ext" != "200" ]; then echo "::warning::public health check returned $ext"; fi
+
+      - name: Publish the URL in the repo
+        run: |
+          {
+            echo "# 🌐 Live public preview — temporary"
+            echo
+            echo "**URL:** $PREVIEW_URL"
+            echo
+            echo "**Login:** $(cat creds.txt)"
+            echo
+            echo "Runner-side health check through the tunnel: HTTP $EXT_CODE"
+            echo
+            echo "- Real limits, same code as the repo: 308 MiB RAM · 719 MiB disk · 25% CPU per account,"
+            echo "  one server, no sign-up — create accounts in the Admin tab."
+            echo "- Disposable: it dies when this Actions job ends (this file then gets an EXPIRED banner)"
+            echo "  and nothing persists. Do not paste real bot tokens into a public demo."
+            echo
+            echo "_Fresh URL any time: \`gh workflow run preview-tunnel.yml --ref <branch> -f hours=5\`_"
+          } > PREVIEW.md
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PREVIEW.md
+          git commit -m "chore: public preview URL [skip ci]" >/dev/null && git push || echo "nothing to push"
+          {
+            echo "## 🔗 Public preview"
+            echo
+            echo "**$PREVIEW_URL**"
+            echo
+            echo '```'
+            cat creds.txt
+            echo '```'
+            echo
+            echo "alive ~${HOURS}h; ends with this job."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Hold the tunnel open
+        run: |
+          h=${HOURS:-5}
+          case "$h" in ''|*[!0-9]*) h=5 ;; esac
+          [ "$h" -gt 5 ] && h=5
+          [ "$h" -lt 1 ] && h=1
+          mins=$(( h * 60 - 12 ))
+          echo "keeping $PREVIEW_URL alive for $mins more minutes"
+          for i in $(seq 1 "$mins"); do
+            sleep 60
+            code=$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/healthz || echo 000)
+            if [ "$code" != "200" ]; then
+              echo "::warning::panel stopped answering (HTTP $code) after ${i} min — ending early"
+              tail -30 panel.log
+              break
+            fi
+            echo "[$(date -u +%H:%M:%S)] healthy · $(curl -s localhost:3000/healthz)"
+          done
+
+      - name: Mark the link expired
+        if: always()
+        run: |
+          if [ -f PREVIEW.md ]; then
+            {
+              echo "> ⛔ **EXPIRED** — the GitHub Actions job that served this preview has ended."
+              echo "> Run \`preview-tunnel.yml\` again for a fresh URL."
+              echo
+              cat PREVIEW.md
+            } > PREVIEW.new && mv PREVIEW.new PREVIEW.md
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add PREVIEW.md
+            git commit -m "chore: preview expired [skip ci]" >/dev/null && git push || true
+          fi
+          pkill -f cloudflared || true
+          pkill -f 'server/index.js' || true
