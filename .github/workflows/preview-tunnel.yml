@@ -1,21 +1,35 @@
 name: preview-tunnel
 
-# Temporary PUBLIC url for the panel, served from a GitHub-hosted runner
-# (this sandbox has no outbound tunnel access, so we borrow a runner).
+# Temporary PUBLIC url for the panel, served from a GitHub-hosted runner — this sandbox has
+# no outbound tunnel access (cloudflared/ngrok/pinggy all blocked), so we borrow a runner.
 #
-#   gh workflow run preview-tunnel.yml --ref <branch> -f hours=5
-#   gh run watch                                  # the URL is in the log after ~1 min
+# Trigger: push any change to THIS file (a comment bump is enough):
 #
-# The URL + login are written to PREVIEW.md at the repo root; when the job ends
-# the file is rewritten with an EXPIRED banner so nobody chases a dead link.
+#   sed -i 's/# refresh.*/# refresh '"$(date -u +%H%M)"'/' .github/workflows/preview-tunnel.yml
+#   git commit -am 'chore: refresh preview link' && git push
+#
+# (`workflow_dispatch` alone is not enough — GitHub only honours it for workflows that also
+# exist on the default branch, and this lives on the working branch.)
+#
+# The URL + admin login land in PREVIEW.md at the repo root; when the job ends, PREVIEW.md is
+# rewritten with an EXPIRED banner so nobody chases a dead link.
 
 on:
   workflow_dispatch:
     inputs:
       hours:
-        description: 'How long to keep the public URL alive (1–5 hours)'
+        description: 'How long to keep the public URL alive (1-5 hours)'
         required: false
         default: '5'
+  push:
+    branches: ['main', 'arena/**']
+    paths:
+      - .github/workflows/preview-tunnel.yml
+
+# one preview at a time — a new push replaces the running tunnel
+concurrency:
+  group: preview-tunnel
+  cancel-in-progress: true
 
 jobs:
   preview:
@@ -142,3 +156,5 @@ jobs:
           fi
           pkill -f cloudflared || true
           pkill -f 'server/index.js' || true
+
+# refresh 0000
